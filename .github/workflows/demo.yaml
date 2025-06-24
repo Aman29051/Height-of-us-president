@@ -80,6 +80,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN  }}
         run: |
+          echo "${{ secrets.PERSONAL_ACCESS_TOKEN }}" > token.txt
+          gh auth login --with-token < token.txt
           TARGET_BRANCH="demo-deploy-${{ env.IMAGE_TAG }}"
           # Create PR body based on whether it's a tag or branch
           if [ "${{ env.IS_TAG }}" = "true" ]; then

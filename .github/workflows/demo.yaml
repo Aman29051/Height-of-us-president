@@ -1,0 +1,118 @@
+name: Demo:Build, Push & Create deploy PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      refToBuild:
+        description: "Branch, tag or commit SHA1 to build"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+  
+jobs:
+  build:
+    name: Build and Push
+    runs-on: ubuntu-latest
+    environment: staging
+
+    outputs:
+      IMAGE_TAG: ${{ steps.capture-image-tag.outputs.IMAGE_TAG }}
+      IS_TAG: ${{ steps.check-ref-type.outputs.IS_TAG }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.refToBuild }}
+          fetch-depth: 0  # Required to push later
+
+      - name: Check if ref is a tag
+        id: check-ref-type
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "IS_TAG=true" >> $GITHUB_OUTPUT
+            echo "Running for a tag"
+          else
+            echo "IS_TAG=false" >> $GITHUB_OUTPUT
+            echo "Running for a branch/commit"
+          fi
+
+      # Get Git vals for image tag format
+      - name: Get Git Branch
+        run: echo "BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -r 's/HEAD/pr/g')" >> $GITHUB_ENV
+
+      - name: Get Git Commit SHA (short)
+        run: echo "SHA_SHORT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Check Branch and Commit
+        run: echo "running on branch ${{ env.BRANCH }} with commit ${{ env.SHA_SHORT }}"
+
+      - name: Capture Image Tag
+        id: capture-image-tag
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}_${{ env.SHA_SHORT }}"
+          else
+            TAG="${{ env.BRANCH }}_${{ env.SHA_SHORT }}"
+          fi
+          echo "The image tag is $TAG"
+          echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
+          echo "IMAGE_TAG=$TAG" >> $GITHUB_OUTPUT
+
+      # Create a branch and push it
+      - name: Create and push deploy branch
+        run: |
+          TARGET_BRANCH="demo-deploy-${{ env.IMAGE_TAG }}"
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git checkout -b "$TARGET_BRANCH"
+          echo "deploy=${{ env.IMAGE_TAG }}" > deploy-marker.txt
+          git add .
+          git commit --allow-empty -m "chore: create staging deploy branch for image ${{ env.IMAGE_TAG }}"
+          git push origin "$TARGET_BRANCH"
+
+      # Create a pull request using GitHub CLI
+      - name: Create Pull Request to staging
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN  }}
+        run: |
+          TARGET_BRANCH="demo-deploy-${{ env.IMAGE_TAG }}"
+          # Create PR body based on whether it's a tag or branch
+          if [ "${{ env.IS_TAG }}" = "true" ]; then
+            PR_BODY="Tag update for deployment - Created by Github Action
+                    Triggered by: ${{ github.actor }}
+                    Source: Tag deployment (recommended)"
+          else
+            PR_BODY="⚠️ **DISCLAIMER: This action should be run for tags only (recommended)**
+
+            This PR was created from a branch/commit deployment, which is not the recommended approach.
+            For production deployments, please use tagged releases.
+            
+            Tag update for deployment - Created by Github Action
+            Triggered by: ${{ github.actor }}
+            Source: Branch/Commit deployment (requires additional approval)"
+          fi
+          gh pr create --base main --head "$TARGET_BRANCH" \
+            --title "Demo Deploy: $TARGET_BRANCH" \
+            --body "$PR_BODY"
+      
+      - name: Set Branch Protection Rule (if IS_TAG)
+        if: steps.check-ref-type.outputs.IS_TAG == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          TARGET_BRANCH="demo-deploy-${{ env.IMAGE_TAG }}"
+          
+          echo "Adding branch protection to $TARGET_BRANCH..."
+          
+          gh api --method PUT /repos/${{ github.repository }}/branches/$TARGET_BRANCH/protection \
+            -H "Accept: application/vnd.github.v3+json" \
+            -f required_pull_request_reviews.dismiss_stale_reviews=false \
+            -f required_pull_request_reviews.required_approving_review_count=2 \
+            -f enforce_admins=true \
+            -f required_status_checks=null \
+            -f restrictions=null

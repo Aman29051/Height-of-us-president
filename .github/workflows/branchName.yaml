@@ -1,0 +1,105 @@
+name: Branch Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    
+    steps:
+      - name: Validate branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            
+            const branch = pr.head.ref;
+            
+            // Skip if not staging/prod branch
+            if (!branch.startsWith('staging-') && !branch.startsWith('prod-')) {
+              console.log('Skipping - not staging/prod branch');
+              return;
+            }
+            
+            // Check format: (staging|prod)-tag-update-<version_commitSHA>
+            const regex = /^(staging|prod)-tag-update-(.+)$/;
+            const match = branch.match(regex);
+            
+            if (!match) {
+              console.log('Skipping - not service deployment branch');
+              return;
+            }
+            
+            const versionPart = match[2];
+            const hasMain = versionPart.toLowerCase().includes('main');
+            
+            if (!hasMain) {
+              console.log('✅ Valid branch format');
+              return;
+            }
+            
+            // Check approvals for main branch
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number
+            });
+            
+            const latestReviews = {};
+            reviews.forEach(review => {
+              if (!latestReviews[review.user.login] || new Date(review.submitted_at) > new Date(latestReviews[review.user.login].submitted_at)) {
+                latestReviews[review.user.login] = review;
+              }
+            });
+            
+            const approvals = Object.values(latestReviews).filter(r => r.state === 'APPROVED').length;
+            
+            let comment;
+            if (approvals >= 2) {
+              comment = `✅ **Main branch deployment approved** (${approvals}/2 approvals)`;
+            } else {
+              comment = `⚠️ **Main branch detected**\n- Not recommended for ${match[1]}\n- Requires 2 approvals (${approvals}/2)`;
+            }
+            
+            // Update existing comment or create new
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number
+            });
+            
+            const existing = comments.find(c => 
+              c.user.login === 'github-actions[bot]' && 
+              (c.body.includes('Main branch') || c.body.includes('Invalid branch'))
+            );
+            
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: comment
+              });
+            }
+            
+            if (approvals < 2) {
+              core.setFailed(`Main branch requires 2 approvals (${approvals}/2)`);
+            }

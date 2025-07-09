@@ -43,12 +43,22 @@ jobs:
             console.log('Version Part:', versionPart);
             
             const parts = versionPart.split('_');
-            console.log('First Part:', parts[0]);
-            console.log('Second Part:', parts[1]);
-
-            const tagRegex = /^v\d+\.\d+\.\d+-.*$/;
+            
+            if (parts.length < 2) {
+              console.log('❌ Not a deployment branch. Skipping...' );
+              return;
+            }
+            
+            console.log('Version:', parts[0]);
+            console.log('Commit SHA:', parts[1]);
+            
+            // Validate version format (e.g., v1.2.3-something)
+            const tagRegex = /^v\d+\.\d+\.\d+(-.*)?$/;
             if (tagRegex.test(parts[0])) {
               console.log('✅ Valid branch format');
+              return;
+            } else {
+              console.log('❌ Branch detected, requires 2 approval');
               return;
             }
 

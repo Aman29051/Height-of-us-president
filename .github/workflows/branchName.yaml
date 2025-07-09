@@ -3,11 +3,7 @@ name: Branch Validation
 on:
   pull_request_review:
     types: [submitted]
-
-concurrency:
-  group: branch-validation-${{ github.event.pull_request.number || github.event.review.pull_request.number }}
-  cancel-in-progress: true
-  
+ 
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -44,6 +40,7 @@ jobs:
             }
             
             const versionPart = match[2];
+            console.log('Version Part:', versionPart);
             const hasMain = versionPart.toLowerCase().includes('main');
             
             if (!hasMain) {

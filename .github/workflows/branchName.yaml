@@ -3,10 +3,6 @@ name: Branch Validation
 on:
   pull_request_review:
     types: [submitted]
-
-concurrency:
-  group: branch-validation-${{ github.event.pull_request.number || github.event.review.pull_request.number }}
-  cancel-in-progress: true
   
 jobs:
   validate:
@@ -50,15 +46,17 @@ jobs:
 
             console.log('First Part:', parts[0]);
             console.log('Second Part:', parts[1]);
-            
-            const hasMain = versionPart.toLowerCase().includes('main');
-            
-            if (!hasMain) {
+
+            const firstPart = parts[0];
+
+            const tagRegex = /^(v|V)\d+\.\d+\.\d+-.*$/;
+
+            if (tagRegex.test(firstPart)) {
               console.log('✅ Valid branch format');
               return;
             }
-            
-            // Check approvals for main branch
+          
+            // Check approvals
             const { data: reviews } = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
               repo: context.repo.repo,

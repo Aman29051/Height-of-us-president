@@ -46,18 +46,18 @@ jobs:
             console.log('First Part:', parts[0]);
             console.log('Second Part:', parts[1]);
 
-            const tagRegex = /^v\d+\.\d+\.\d+-.*$/;
-            if (tagRegex.test(parts[0])) {
-              console.log('✅ Valid branch format');
-              return;
-            }
-
-            # const hasMain = versionPart.toLowerCase().includes('main');
-            
-            # if (!hasMain) {
+            # const tagRegex = /^v\d+\.\d+\.\d+-.*$/;
+            # if (tagRegex.test(parts[0])) {
             #   console.log('✅ Valid branch format');
             #   return;
             # }
+
+            const hasMain = versionPart.toLowerCase().includes('main');
+            
+            if (!hasMain) {
+              console.log('✅ Valid branch format');
+              return;
+            }
             
             // Check approvals
             const { data: reviews } = await github.rest.pulls.listReviews({

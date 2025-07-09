@@ -43,15 +43,11 @@ jobs:
             console.log('Version Part:', versionPart);
 
             const parts = versionPart.split('_');
-
-            console.log('First Part:', parts[0]);
-            console.log('Second Part:', parts[1]);
-
-            const firstPart = parts[0];
+            const branchName = parts[0];
 
             const tagRegex = /^(v|V)\d+\.\d+\.\d+-.*$/;
 
-            if (tagRegex.test(firstPart)) {
+            if (tagRegex.test(branchName)) {
               console.log('✅ Valid branch format');
               return;
             }
@@ -74,9 +70,9 @@ jobs:
             
             let comment;
             if (approvals >= 2) {
-              comment = `✅ **Main branch deployment approved** (${approvals}/2 approvals)`;
+              comment = `✅ **${branchName} branch deployment approved** (${approvals}/2 approvals)`;
             } else {
-              comment = `⚠️ **Main branch detected**\n- Not recommended for ${match[1]}\n- Requires 2 approvals (${approvals}/2)`;
+              comment = `⚠️ **Branch detected: ${branchName}**\n- Not recommended to deploy on ${match[1]}\n- Requires 2 approvals (${approvals}/2)`;
             }
             
             // Update existing comment or create new
@@ -108,5 +104,5 @@ jobs:
             }
             
             if (approvals < 2) {
-              core.setFailed(`Main branch requires 2 approvals (${approvals}/2)`);
+              core.setFailed(`${branchName} branch requires 2 approvals (${approvals}/2)`);
             }

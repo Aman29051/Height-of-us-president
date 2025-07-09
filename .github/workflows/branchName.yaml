@@ -44,6 +44,7 @@ jobs:
             }
             
             const versionPart = match[2];
+            console.log('Version Part:', versionPart);
             const hasMain = versionPart.toLowerCase().includes('main');
             
             if (!hasMain) {

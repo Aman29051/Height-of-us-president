@@ -45,8 +45,9 @@ jobs:
             const parts = versionPart.split('_');
             const branchName = parts[0];
 
-            const tagRegex = /^(v|V)\d+\.\d+\.\d+-.*$/;
-
+            # const tagRegex = /^(v|V)\d+\.\d+\.\d+-.*$/;
+            const tagRegex = /^(v|V)\d+\.\d+\.\d+([-_].*)?$/;
+ 
             if (tagRegex.test(branchName)) {
               console.log('✅ Valid branch format');
               return;

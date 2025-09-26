@@ -39,17 +39,30 @@ jobs:
               return;
             }
             
+            const branchType = match[1]; // 'staging' or 'prod'
             const versionPart = match[2];
+            console.log('Branch Type:', branchType);
             console.log('Version Part:', versionPart);
-
             const parts = versionPart.split('_');
             const branchName = parts[0];
 
             const tagRegex = new RegExp('^(v|V)\\d+\\.\\d+\\.\\d+([-_].*)?$');
- 
+
             if (tagRegex.test(branchName)) {
               console.log('✅ Valid branch format');
               return;
+            }
+            
+            // Check if staging branch contains "fast" in version_commitSHA part
+            let requiresTwoApprovals = false;
+            let deploymentType = '';
+            
+            if (branchType === 'staging' && versionPart.includes('fast')) {
+              requiresTwoApprovals = true;
+              deploymentType = 'fast deployment';
+              console.log('🚨 Fast deployment detected - requires 2 approvals');
+            } else {
+              console.log('ℹ️ Regular staging deployment - no special approval requirements');
             }
           
             // Check approvals
@@ -69,10 +82,14 @@ jobs:
             const approvals = Object.values(latestReviews).filter(r => r.state === 'APPROVED').length;
             
             let comment;
-            if (approvals >= 2) {
-              comment = `✅ **${branchName} branch deployment approved** (${approvals}/2 approvals)`;
+            if (requiresTwoApprovals) {
+              if (approvals >= 2) {
+                comment = `✅ **${branchName} ${deploymentType} approved** (${approvals}/2 approvals)`;
+              } else {
+                comment = `⚠️ **Branch detected: ${branchName}**\n- ${deploymentType.charAt(0).toUpperCase() + deploymentType.slice(1)} detected\n- Requires 2 approvals (${approvals}/2)`;
+              }
             } else {
-              comment = `⚠️ **Branch detected: ${branchName}**\n- Not recommended to deploy on ${match[1]}\n- Requires 2 approvals (${approvals}/2)`;
+              comment = `✅ **${branchName} staging deployment** - No special approval requirements`;
             }
             
             // Update existing comment or create new
@@ -84,7 +101,7 @@ jobs:
             
             const existing = comments.find(c => 
               c.user.login === 'github-actions[bot]' && 
-              (c.body.includes('Main branch') || c.body.includes('Invalid branch'))
+              (c.body.includes('Main branch') || c.body.includes('Invalid branch') || c.body.includes('deployment'))
             );
             
             if (existing) {
@@ -103,6 +120,6 @@ jobs:
               });
             }
             
-            if (approvals < 2) {
-              core.setFailed(`${branchName} branch requires 2 approvals (${approvals}/2)`);
+            if (requiresTwoApprovals && approvals < 2) {
+              core.setFailed(`${branchName} ${deploymentType} requires 2 approvals (${approvals}/2)`);
             }

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       refToBuild:
-        description: "Branch, tag or commit SHA1 to build"
+        description: "Branch, tag or commit SHA1 to buildsds"
         required: true
         type: string
 

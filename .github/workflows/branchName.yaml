@@ -43,7 +43,7 @@ jobs:
             const parts = versionPart.split('_');
             const branchName = parts[0];
             
-            const isFastDeployment = branchName.includes('-fast-');
+            const isFastDeployment = branchName.includes('-fast-') && match[1] === 'staging';            
             const tagRegex = new RegExp('^(v|V)\\d+\\.\\d+\\.\\d+([-_].*)?
             
             // Check approvals

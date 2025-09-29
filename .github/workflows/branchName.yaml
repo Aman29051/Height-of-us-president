@@ -1,5 +1,4 @@
 name: Branch Validation
-
 on:
   pull_request_review:
     types: [submitted]
@@ -39,32 +38,29 @@ jobs:
               return;
             }
             
-            const branchType = match[1]; // 'staging' or 'prod'
             const versionPart = match[2];
-            console.log('Branch Type:', branchType);
             console.log('Version Part:', versionPart);
             const parts = versionPart.split('_');
             const branchName = parts[0];
-
+            
+            const isFastDeployment = branchName.includes('-fast-') && branch.startsWith('staging-');
             const tagRegex = new RegExp('^(v|V)\\d+\\.\\d+\\.\\d+([-_].*)?$');
-
-            if (tagRegex.test(branchName)) {
-              console.log('✅ Valid branch format');
+            
+            let versionToCheck = branchName;
+            if (isFastDeployment) {
+              const fastMatch = branchName.match(/^(.+)-fast-/);
+              if (fastMatch) {
+                versionToCheck = fastMatch[1];
+              }
+            }
+            
+            if (!tagRegex.test(versionToCheck)) {
+              console.log('Skipping - invalid version format');
               return;
             }
             
-            // Check if staging branch contains "fast" in version_commitSHA part
-            let requiresTwoApprovals = false;
-            let deploymentType = '';
+            console.log('✅ Valid branch format');
             
-            if (branchType === 'staging' && versionPart.includes('fast')) {
-              requiresTwoApprovals = true;
-              deploymentType = 'fast deployment';
-              console.log('🚨 Fast deployment detected - requires 2 approvals');
-            } else {
-              console.log('ℹ️ Regular staging deployment - no special approval requirements');
-            }
-          
             // Check approvals
             const { data: reviews } = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
@@ -82,14 +78,20 @@ jobs:
             const approvals = Object.values(latestReviews).filter(r => r.state === 'APPROVED').length;
             
             let comment;
-            if (requiresTwoApprovals) {
+            if (isFastDeployment) {
+              // Special handling for fast deployments
               if (approvals >= 2) {
-                comment = `✅ **${branchName} ${deploymentType} approved** (${approvals}/2 approvals)`;
+                comment = `✅ **${branchName} staging fast deployment approved** (${approvals}/2 approvals)\n🚀 This is a fast deployment requiring 2 approvals for safety.`;
               } else {
-                comment = `⚠️ **Branch detected: ${branchName}**\n- ${deploymentType.charAt(0).toUpperCase() + deploymentType.slice(1)} detected\n- Requires 2 approvals (${approvals}/2)`;
+                comment = `⚠️ **Staging Fast Deployment Detected: ${branchName}**\n🚀 This is a **staging fast deployment** requiring 2 approvals for safety\n- Current approvals: (${approvals}/2)\n- Please ensure proper review before deployment`;
               }
             } else {
-              comment = `✅ **${branchName} staging deployment** - No special approval requirements`;
+              // Regular deployment handling
+              if (approvals >= 2) {
+                comment = `✅ **${branchName} branch deployment approved** (${approvals}/2 approvals)`;
+              } else {
+                comment = `⚠️ **Branch detected: ${branchName}**\n- Not recommended to deploy on ${match[1]}\n- Requires 2 approvals (${approvals}/2)`;
+              }
             }
             
             // Update existing comment or create new
@@ -101,7 +103,10 @@ jobs:
             
             const existing = comments.find(c => 
               c.user.login === 'github-actions[bot]' && 
-              (c.body.includes('Main branch') || c.body.includes('Invalid branch') || c.body.includes('deployment'))
+              (c.body.includes('Main branch') || 
+               c.body.includes('Invalid branch') || 
+               c.body.includes('branch deployment') ||
+               c.body.includes('Fast Deployment'))
             );
             
             if (existing) {
@@ -120,6 +125,11 @@ jobs:
               });
             }
             
-            if (requiresTwoApprovals && approvals < 2) {
-              core.setFailed(`${branchName} ${deploymentType} requires 2 approvals (${approvals}/2)`);
+            // Fail if insufficient approvals (for both regular and fast deployments)
+            if (approvals < 2) {
+              if (isFastDeployment) {
+                core.setFailed(`Staging fast deployment ${branchName} requires 2 approvals for safety (${approvals}/2)`);
+              } else {
+                core.setFailed(`${branchName} branch requires 2 approvals (${approvals}/2)`);
+              }
             }

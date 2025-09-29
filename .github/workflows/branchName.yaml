@@ -43,24 +43,16 @@ jobs:
             const parts = versionPart.split('_');
             const branchName = parts[0];
             
+            // Check for fast deployment
             const isFastDeployment = branchName.includes('-fast-') && branch.startsWith('staging-');
-            const tagRegex = new RegExp('^(v|V)\\d+\\.\\d+\\.\\d+([-_].*)?$');
             
-            let versionToCheck = branchName;
-            if (isFastDeployment) {
-              const fastMatch = branchName.match(/^(.+)-fast-/);
-              if (fastMatch) {
-                versionToCheck = fastMatch[1];
-              }
-            }
+            const tagRegex = new RegExp('^(v|V)\\d+\\.\\d+\\.\\d+([-_].*)?$');            
             
-            if (!tagRegex.test(versionToCheck)) {
-              console.log('Skipping - invalid version format');
+            if (tagRegex.test(branchName) && !isFastDeployment) {
+              console.log('✅ Valid branch format');
               return;
             }
-            
-            console.log('✅ Valid branch format');
-            
+          
             // Check approvals
             const { data: reviews } = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
@@ -79,14 +71,12 @@ jobs:
             
             let comment;
             if (isFastDeployment) {
-              // Special handling for fast deployments
               if (approvals >= 2) {
-                comment = `✅ **${branchName} staging fast deployment approved** (${approvals}/2 approvals)\n🚀 This is a fast deployment requiring 2 approvals for safety.`;
+                comment = `🚀 **Fast deployment approved for ${branchName}** (${approvals}/2 approvals)\n- Fast deployment to staging environment`;
               } else {
-                comment = `⚠️ **Staging Fast Deployment Detected: ${branchName}**\n🚀 This is a **staging fast deployment** requiring 2 approvals for safety\n- Current approvals: (${approvals}/2)\n- Please ensure proper review before deployment`;
+                comment = `⚡ **Fast deployment detected: ${branchName}**\n- Fast deployment to staging environment\n- Requires 2 approvals (${approvals}/2)`;
               }
             } else {
-              // Regular deployment handling
               if (approvals >= 2) {
                 comment = `✅ **${branchName} branch deployment approved** (${approvals}/2 approvals)`;
               } else {
@@ -103,10 +93,7 @@ jobs:
             
             const existing = comments.find(c => 
               c.user.login === 'github-actions[bot]' && 
-              (c.body.includes('Main branch') || 
-               c.body.includes('Invalid branch') || 
-               c.body.includes('branch deployment') ||
-               c.body.includes('Fast Deployment'))
+              (c.body.includes('Main branch') || c.body.includes('Invalid branch') || c.body.includes('branch deployment') || c.body.includes('Fast deployment'))
             );
             
             if (existing) {
@@ -125,11 +112,7 @@ jobs:
               });
             }
             
-            // Fail if insufficient approvals (for both regular and fast deployments)
             if (approvals < 2) {
-              if (isFastDeployment) {
-                core.setFailed(`Staging fast deployment ${branchName} requires 2 approvals for safety (${approvals}/2)`);
-              } else {
-                core.setFailed(`${branchName} branch requires 2 approvals (${approvals}/2)`);
-              }
+              const deploymentType = isFastDeployment ? 'Fast deployment' : `${branchName} branch`;
+              core.setFailed(`${deploymentType} requires 2 approvals (${approvals}/2)`);
             }

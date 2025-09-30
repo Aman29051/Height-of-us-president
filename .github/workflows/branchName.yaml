@@ -141,6 +141,7 @@ jobs:
               });
             }
             
-            if (approvals < 2 && isSpecialDeployment) {
-              core.setFailed(`${tagName} deployment requires 2 approvals (${approvals}/2)`);
+            if (approvals < 2) {
+              const deploymentType = isSpecialDeployment ? 'Special deployment' : `${tagName}`;
+              core.setFailed(`${deploymentType} requires 2 approvals (${approvals}/2)`);
             }

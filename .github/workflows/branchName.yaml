@@ -1,17 +1,18 @@
-name: Branch Validation
+name: Branch validation
+
 on:
   pull_request_review:
     types: [submitted]
-  
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
       contents: read
-    
+
     steps:
-      - name: Validate branch
+      - name: Validate deployment PR
         uses: actions/github-script@v7
         with:
           script: |
@@ -20,36 +21,64 @@ jobs:
               repo: context.repo.repo,
               pull_number: context.issue.number
             });
-            
-            const branch = pr.head.ref;
-            
-            // Skip if not staging/prod branch
-            if (!branch.startsWith('staging-') && !branch.startsWith('prod-')) {
-              console.log('Skipping - not staging/prod branch');
+
+            // Get changed files
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number
+            });
+
+            const changedFiles = files.map(f => f.filename);
+            console.log("Changed files:", changedFiles);
+
+            // Check if kustomization.yaml in staging/prod changed
+            const targetFile = changedFiles.find(f => 
+              f === "staging/kustomization.yaml" || f === "prod/kustomization.yaml"
+            );
+
+            let versionPart = null;
+
+            if (targetFile) {
+              console.log(`Found change in ${targetFile}, extracting newTag...`);
+
+              // Get file content
+              const { data: file } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: targetFile,
+                ref: pr.head.sha
+              });
+
+              const content = Buffer.from(file.content, file.encoding).toString("utf8");
+
+              // Extract newTag values (YAML parsing via regex)
+              const tagRegex = /newTag:\s*([^\s]+)/g;
+              let match;
+              while ((match = tagRegex.exec(content)) !== null) {
+                versionPart = match[1]; // take the last newTag
+              }
+
+              console.log("Extracted newTag:", versionPart);
+            }
+
+            // If no kustomization.yaml change, return
+            if (!versionPart) {
+              console.log("No kustomization.yaml change");
               return;
             }
-            
-            // Check format: (staging|prod)-tag-update-<version_commitSHA>
-            const regex = /^(staging|prod)-tag-update-(.+)$/;
-            const match = branch.match(regex);
-            
-            if (!match) {
-              console.log('Skipping - not service deployment branch');
-              return;
-            }
-            
-            const versionPart = match[2];
-            console.log('Version Part:', versionPart);
-            const parts = versionPart.split('_');
-            const branchName = parts[0];
-            
-            // Check for fast deployment
-            const isFastDeployment = branchName.includes('-fast-') && branch.startsWith('staging-');
-            
-            const tagRegex = new RegExp('^(v|V)\\d+\\.\\d+\\.\\d+([-_].*)?$');            
-            
-            if (tagRegex.test(branchName) && !isFastDeployment) {
-              console.log('✅ Valid branch format');
+
+            // Validate versionPart
+            console.log("Version Part for validation:", versionPart);
+            const parts = versionPart.split("_");
+            const tagName = parts[0];
+
+            // Check if this is a special deployment
+            const isSpecialDeployment = tagName.match(/^(v|V)0\.0\.0-.+-v\d+(\.\d+)?$/) && targetFile === "staging/kustomization.yaml";
+            const tagRegex = new RegExp("^(v|V)\\d+\\.\\d+\\.\\d+([-_].*)?$");            
+
+            if (tagRegex.test(tagName) && !isSpecialDeployment) {
+              console.log("✅ Valid tag format");
               return;
             }
           
@@ -70,17 +99,17 @@ jobs:
             const approvals = Object.values(latestReviews).filter(r => r.state === 'APPROVED').length;
             
             let comment;
-            if (isFastDeployment) {
+            if (isSpecialDeployment) {
               if (approvals >= 2) {
-                comment = `🚀 **Fast deployment approved for ${branchName}** (${approvals}/2 approvals)\n- Fast deployment to staging environment`;
+                comment = `🚀 **Special deployment approved for ${tagName}** (${approvals}/2 approvals)\n- Special deployment to staging environment`;
               } else {
-                comment = `⚡ **Fast deployment detected: ${branchName}**\n- Fast deployment to staging environment\n- Requires 2 approvals (${approvals}/2)`;
+                comment = `⚡ **Special deployment detected: ${tagName}**\n- Special deployment to staging environment\n- Can proceed without 2 approvals (${approvals}/2)`;
               }
             } else {
               if (approvals >= 2) {
-                comment = `✅ **${branchName} branch deployment approved** (${approvals}/2 approvals)`;
+                comment = `✅ **${tagName} deployment approved** (${approvals}/2 approvals)`;
               } else {
-                comment = `⚠️ **Branch detected: ${branchName}**\n- Not recommended to deploy on ${match[1]}\n- Requires 2 approvals (${approvals}/2)`;
+                comment = `⚠️ **Deployment detected: ${tagName}**\n- Requires 2 approvals (${approvals}/2)`;
               }
             }
             
@@ -93,7 +122,7 @@ jobs:
             
             const existing = comments.find(c => 
               c.user.login === 'github-actions[bot]' && 
-              (c.body.includes('Main branch') || c.body.includes('Invalid branch') || c.body.includes('branch deployment') || c.body.includes('Fast deployment'))
+              (c.body.includes('Main branch') || c.body.includes('Invalid branch') || c.body.includes('branch deployment') || c.body.includes("deployment approved") || c.body.includes("Special deployment"))
             );
             
             if (existing) {
@@ -112,7 +141,6 @@ jobs:
               });
             }
             
-            if (approvals < 2) {
-              const deploymentType = isFastDeployment ? 'Fast deployment' : `${branchName} branch`;
-              core.setFailed(`${deploymentType} requires 2 approvals (${approvals}/2)`);
+            if (approvals < 2 && isSpecialDeployment) {
+              core.setFailed(`${tagName} deployment requires 2 approvals (${approvals}/2)`);
             }

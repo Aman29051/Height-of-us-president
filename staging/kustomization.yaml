@@ -6,6 +6,6 @@ bases:
   - ./sops.yaml
 images:
   - name: 716137715997.dkr.ecr.us-east-1.amazonaws.com/report-service-migration
-    newTag: main123_f2abc642
-  - name: 716137715997.dkr.ecr.us-east-1.amazonaws.com/report-service
-    newTag: main123_f2abc642
+    newTag: main12s3_f2abc642
+  - name: 716137715s997.dkr.ecr.us-east-1.amazonaws.com/report-service
+    newTag: main123s_f2abc642

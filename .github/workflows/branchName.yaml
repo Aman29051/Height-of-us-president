@@ -74,7 +74,7 @@ jobs:
             const tagName = parts[0];
 
             // Check if this is a special deployment
-            const isSpecialDeployment = tagName.match(/^(v|V)0\.0\.0-.+-v\d+(\.\d+)?$/) && targetFile === "staging/kustomization.yaml";
+            const isSpecialDeployment = tagName.match(/^(v|V)\d+\.\d+\.\d+-.+-v\d+(\.\d+)?$/) && targetFile === "staging/kustomization.yaml";
             const tagRegex = new RegExp("^(v|V)\\d+\\.\\d+\\.\\d+([-_].*)?$");            
 
             if (tagRegex.test(tagName) && !isSpecialDeployment) {

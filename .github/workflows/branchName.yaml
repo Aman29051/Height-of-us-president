@@ -1,4 +1,4 @@
-name: Branch validation
+name: Tag Validation
 
 on:
   pull_request_review:
@@ -12,7 +12,7 @@ jobs:
       contents: read
 
     steps:
-      - name: Validate deployment PR
+      - name: Validate Tag
         uses: actions/github-script@v7
         with:
           script: |
@@ -41,47 +41,121 @@ jobs:
 
             if (targetFile) {
               console.log(`Found change in ${targetFile}, extracting newTag...`);
-
-              // Get file content
+              
+              // Get file content from PR head
               const { data: file } = await github.rest.repos.getContent({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 path: targetFile,
                 ref: pr.head.sha
               });
-
+              
               const content = Buffer.from(file.content, file.encoding).toString("utf8");
-
+              
               // Extract newTag values (YAML parsing via regex)
               const tagRegex = /newTag:\s*([^\s]+)/g;
               let match;
               while ((match = tagRegex.exec(content)) !== null) {
                 versionPart = match[1]; // take the last newTag
               }
-
+              
               console.log("Extracted newTag:", versionPart);
+              
+              // Get configurable number of commits to check (default: 5)
+              const commitHistoryDepth = parseInt(process.env.ROLLBACK_CHECK_DEPTH || '5', 10);
+              console.log(`Checking last ${commitHistoryDepth} commits for rollback detection`);
+              
+              // Get last N commits that modified this file
+              const { data: commits } = await github.rest.repos.listCommits({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: targetFile,
+                per_page: commitHistoryDepth
+              });
+              
+              console.log(`Found ${commits.length} recent commits for ${targetFile}`);
+              
+              // Extract newTag from each of the last 5 commits
+              const previousTags = [];
+              for (const commit of commits) {
+                try {
+                  const { data: historicalFile } = await github.rest.repos.getContent({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    path: targetFile,
+                    ref: commit.sha
+                  });
+                  
+                  const historicalContent = Buffer.from(historicalFile.content, historicalFile.encoding).toString("utf8");
+                  const historicalTagRegex = /newTag:\s*([^\s]+)/g;
+                  let historicalMatch;
+                  let historicalTag = null;
+                  
+                  while ((historicalMatch = historicalTagRegex.exec(historicalContent)) !== null) {
+                    historicalTag = historicalMatch[1];
+                  }
+                  
+                  if (historicalTag) {
+                    previousTags.push({
+                      tag: historicalTag,
+                      sha: commit.sha.substring(0, 7),
+                      date: commit.commit.author.date
+                    });
+                  }
+                } catch (error) {
+                  console.log(`Could not fetch content for commit ${commit.sha}: ${error.message}`);
+                }
+              }
+              
+              console.log("Previous tags from last 5 commits:", previousTags);
+              
+              // Check if current tag is a rollback
+              const isRollback = previousTags.some(prev => prev.tag === versionPart);
+              
+              if (isRollback) {
+                console.log(`🔄 ROLLBACK DETECTED: ${versionPart} was previously deployed`);
+                const rollbackDetails = previousTags.find(prev => prev.tag === versionPart);
+                
+                // Set a flag to require 2 approvals for rollback
+                const rollbackComment = `🔄 **ROLLBACK DETECTED**\n\n` +
+                  `**Tag:** \`${versionPart}\`\n` +
+                  `**Target:** \`${targetFile}\`\n` +
+                  `**Previous deployment:** ${rollbackDetails.date} (commit: ${rollbackDetails.sha})\n\n` +
+                  `⚠️ This tag was previously deployed. Rolling back requires **2 approvals** for safety.\n\n` +
+                  `**Recent deployment history:**\n` +
+                  previousTags.map((t, i) => `${i + 1}. \`${t.tag}\` - ${t.date.split('T')[0]} (${t.sha})`).join('\n');
+                
+                // Store rollback info for later use in approval logic
+                core.exportVariable('IS_ROLLBACK', 'true');
+                core.exportVariable('ROLLBACK_TAG', versionPart);
+                core.exportVariable('ROLLBACK_COMMENT', rollbackComment);
+              } else {
+                console.log(`✅ New deployment: ${versionPart} (not in last 5 commits)`);
+                core.exportVariable('IS_ROLLBACK', 'false');
+              }
             }
-
+            
+            // After extracting versionPart and checking rollback...
+            
             // If no kustomization.yaml change, return
             if (!versionPart) {
-              console.log("No kustomization.yaml change");
+              console.log("No tag change in kustomization.yaml");
               return;
             }
-
+            
+            // Get rollback status
+            const isRollback = process.env.IS_ROLLBACK === 'true';
+            const rollbackComment = process.env.ROLLBACK_COMMENT;
+            
             // Validate versionPart
             console.log("Version Part for validation:", versionPart);
             const parts = versionPart.split("_");
             const tagName = parts[0];
-
-            // Check if this is a special deployment
+            
+            // Checks for special deployment tags
             const isSpecialDeployment = tagName.match(/^(v|V)\d+\.\d+\.\d+-.+-v\d+(\.\d+)?$/) && targetFile === "staging/kustomization.yaml";
-            const tagRegex = new RegExp("^(v|V)\\d+\\.\\d+\\.\\d+([-_].*)?$");            
-
-            if (tagRegex.test(tagName) && !isSpecialDeployment) {
-              console.log("✅ Valid tag format");
-              return;
-            }
-          
+            const tagRegex = new RegExp("^(v|V)\\d+\\.\\d+\\.\\d+([-_].*)?$");
+            
             // Check approvals
             const { data: reviews } = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
@@ -99,17 +173,35 @@ jobs:
             const approvals = Object.values(latestReviews).filter(r => r.state === 'APPROVED').length;
             
             let comment;
-            if (isSpecialDeployment) {
+            let requiresTwoApprovals = false;
+            
+            // Rollback always requires 2 approvals
+            if (isRollback) {
+              requiresTwoApprovals = true;
+              if (approvals >= 2) {
+                comment = rollbackComment + `\n\n✅ **Rollback approved** (${approvals}/2 approvals)`;
+              } else {
+                comment = rollbackComment + `\n\n❌ **Rollback blocked** - Need ${2 - approvals} more approval(s) (${approvals}/2)`;
+              }
+            } else if (tagRegex.test(tagName) && !isSpecialDeployment) {
+              // Standard semantic version - 1 approval
+              console.log("✅ Valid tag format for 1 approval");
+              return;
+            } else if (isSpecialDeployment) {
+              // Special deployment - 2 approvals
+              requiresTwoApprovals = true;
               if (approvals >= 2) {
                 comment = `🚀 **Special deployment approved for ${tagName}** (${approvals}/2 approvals)\n- Special deployment to staging environment`;
               } else {
-                comment = `⚡ **Special deployment detected: ${tagName}**\n- Special deployment to staging environment\n- Can not proceed without 2 approvals (${approvals}/2)`;
+                comment = `⚡ **Special deployment detected: ${tagName}**\n- Special deployment to staging environment\n- Cannot proceed without 2 approvals (${approvals}/2)`;
               }
             } else {
+              // Branch deployment - 2 approvals
+              requiresTwoApprovals = true;
               if (approvals >= 2) {
                 comment = `✅ **${tagName} deployment approved** (${approvals}/2 approvals)`;
               } else {
-                comment = `⚠️ **Deployment detected: ${tagName}**\n- Requires 2 approvals (${approvals}/2)`;
+                comment = `⚠️ **Branch detected: ${tagName}**\n- Not recommended to deploy on staging|prod\n- Requires 2 approvals (${approvals}/2)`;
               }
             }
             
@@ -122,7 +214,10 @@ jobs:
             
             const existing = comments.find(c => 
               c.user.login === 'github-actions[bot]' && 
-              (c.body.includes('Main branch') || c.body.includes('Invalid branch') || c.body.includes('branch deployment') || c.body.includes("deployment approved") || c.body.includes("Special deployment"))
+              (c.body.includes("deployment approved") || 
+               c.body.includes("Special deployment") || 
+               c.body.includes("Branch detected") ||
+               c.body.includes("ROLLBACK DETECTED"))
             );
             
             if (existing) {
@@ -141,7 +236,8 @@ jobs:
               });
             }
             
-            if (approvals < 2) {
-              const deploymentType = isSpecialDeployment ? 'Special deployment' : `${tagName}`;
+            // Fail if insufficient approvals for cases requiring 2 approvals
+            if (requiresTwoApprovals && approvals < 2) {
+              const deploymentType = isRollback ? 'Rollback' : (isSpecialDeployment ? 'Special deployment' : tagName);
               core.setFailed(`${deploymentType} requires 2 approvals (${approvals}/2)`);
             }

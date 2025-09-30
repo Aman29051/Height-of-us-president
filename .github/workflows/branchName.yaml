@@ -103,7 +103,7 @@ jobs:
               if (approvals >= 2) {
                 comment = `🚀 **Special deployment approved for ${tagName}** (${approvals}/2 approvals)\n- Special deployment to staging environment`;
               } else {
-                comment = `⚡ **Special deployment detected: ${tagName}**\n- Special deployment to staging environment\n- Can proceed without 2 approvals (${approvals}/2)`;
+                comment = `⚡ **Special deployment detected: ${tagName}**\n- Special deployment to staging environment\n- Can not proceed without 2 approvals (${approvals}/2)`;
               }
             } else {
               if (approvals >= 2) {
